@@ -1,3 +1,4 @@
+import warnings
 import gym
 import gym_super_mario_bros
 from gym.wrappers import FrameStack
@@ -5,9 +6,11 @@ from nes_py.wrappers import JoypadSpace
 
 from environments.wrappers import SkipFrame, GrayScaleObservation, CropObservation, ResizeObservation
 
-def make_smb_env():
+def make_smb_env(render_mode="rgb_array"):
+    warnings.filterwarnings("ignore", category=UserWarning, module="gym")
+    
     # Initialize SMB environment
-    env = gym_super_mario_bros.make("SuperMarioBros-1-1-v2", render_mode='rgb_array', apply_api_compatibility=True)
+    env = gym_super_mario_bros.make("SuperMarioBros-1-1-v2", render_mode=render_mode, apply_api_compatibility=True)
 
     # Limit the action-space
     #   0. Sprint right

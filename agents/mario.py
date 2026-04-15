@@ -20,7 +20,7 @@ class Mario:
 
         # Initialize learning parameters
         self.exploration_rate       = 1
-        self.exploration_rate_decay = 0.999995
+        self.exploration_rate_decay = 0.99999611
         self.exploration_rate_min   = 0.1
 
         self.discount   = 0.9   # Gamma
@@ -35,7 +35,7 @@ class Mario:
         self.loss_fn    = torch.nn.SmoothL1Loss()
 
         # Initialize memory parameters
-        self.memory     = TensorDictReplayBuffer(storage=LazyMemmapStorage(20000, device=torch.device("cpu")))
+        self.memory     = TensorDictReplayBuffer(storage=LazyMemmapStorage(75000, device=torch.device("cpu")))
         self.batch_size = 32
 
     # Given a state, choose an action and update step
@@ -72,6 +72,7 @@ class Mario:
         reward      = torch.tensor([reward])
         done        = torch.tensor([done])
 
+        reward = np.clip(reward, -1, 1) # Reward clipping
         self.memory.add(TensorDict({"state": state, "next_state": next_state, "action": action, "reward": reward, "done": done}, batch_size=[]))
 
     # Retrieve batch of experiences
@@ -102,6 +103,7 @@ class Mario:
         loss = self.loss_fn(td_estimate, td_target)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.online.parameters(), max_norm=1.0)  # Gradient clipping
         self.optimizer.step()
         return loss.item()
 

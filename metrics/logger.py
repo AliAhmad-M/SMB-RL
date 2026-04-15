@@ -1,105 +1,359 @@
 import numpy as np
 import time, datetime
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import json
+from collections import deque
 
 class MetricLogger:
-    def __init__(self, save_dir):
+    def __init__(self, save_dir, checkpoint_every=100, window=100):
+        self.save_dir = save_dir
+        self.checkpoint_every = checkpoint_every  # Log every N episodes
+        self.window = window
         self.save_log = save_dir / "log"
+
         with open(self.save_log, "w") as f:
             f.write(
-                f"{'Episode':>8}{'Step':>8}{'Epsilon':>10}{'MeanReward':>15}"
+                f"{'Checkpoint':>10}{'Episode':>10}{'Step':>12}{'Epsilon':>10}{'MeanReward':>15}"
                 f"{'MeanLength':>15}{'MeanLoss':>15}{'MeanQValue':>15}"
-                f"{'TimeDelta':>15}{'Time':>20}\n"
+                f"{'BestReward':>15}{'TimeDelta':>15}{'Time':>20}\n"
             )
-        self.ep_rewards_plot = save_dir / "reward_plot.jpg"
-        self.ep_lengths_plot = save_dir / "length_plot.jpg"
-        self.ep_avg_losses_plot = save_dir / "loss_plot.jpg"
-        self.ep_avg_qs_plot = save_dir / "q_plot.jpg"
 
-        # History metrics
+        # Per-episode history
         self.ep_rewards = []
         self.ep_lengths = []
         self.ep_avg_losses = []
         self.ep_avg_qs = []
+        self.ep_epsilon = []
+        self.ep_timestamps = []
+        self.ep_checkpoint_num = []  # Which checkpoint each episode belongs to
 
-        # Moving averages, added for every call to record()
-        self.moving_avg_ep_rewards = []
-        self.moving_avg_ep_lengths = []
-        self.moving_avg_ep_avg_losses = []
-        self.moving_avg_ep_avg_qs = []
+        # Checkpoint summaries
+        self.checkpoint_rewards = []
+        self.checkpoint_lengths = []
+        self.checkpoint_losses = []
+        self.checkpoint_qs = []
+        self.checkpoint_epsilons = []
+        self.checkpoint_timestamps = []
+        self.checkpoint_episodes = []  # Episode number at checkpoint
+        self.checkpoint_steps = []     # Step number at checkpoint
 
-        # Current episode metric
+        # Moving averages (by checkpoint)
+        self.moving_avg_rewards = []
+        self.moving_avg_lengths = []
+        self.moving_avg_losses = []
+        self.moving_avg_qs = []
+
+        # Best reward tracking
+        self.best_reward = -np.inf
+        self.best_reward_episode = 0
+        self.best_reward_checkpoint = 0
+
+        # Reward distribution tracking
+        self.recent_rewards = deque(maxlen=window)
+
+        # Checkpoint counter
+        self.current_checkpoint = 0
+        self.episodes_since_checkpoint = 0
+        
+        # Accumulators for current checkpoint
+        self.checkpoint_reward_sum = 0
+        self.checkpoint_length_sum = 0
+        self.checkpoint_loss_sum = 0
+        self.checkpoint_q_sum = 0
+        self.checkpoint_epsilon_sum = 0
+
         self.init_episode()
-
-        # Timing
         self.record_time = time.time()
+        self.start_time = time.time()
 
-    def log_step(self, reward, loss, q):
+    # Per-step logging
+    def log_step(self, reward, loss, q, grad_norm=None):
         self.curr_ep_reward += reward
         self.curr_ep_length += 1
-        if loss:
+        if loss is not None:
             self.curr_ep_loss += loss
             self.curr_ep_q += q
             self.curr_ep_loss_length += 1
+        if grad_norm is not None:
+            self.curr_ep_grad_norm += grad_norm
+            self.curr_ep_grad_length += 1
 
+    # Per-episode logging
     def log_episode(self):
-        # Mark end of episode
         self.ep_rewards.append(self.curr_ep_reward)
         self.ep_lengths.append(self.curr_ep_length)
-        if self.curr_ep_loss_length == 0:
-            ep_avg_loss = 0
-            ep_avg_q = 0
-        else:
-            ep_avg_loss = np.round(self.curr_ep_loss / self.curr_ep_loss_length, 5)
-            ep_avg_q = np.round(self.curr_ep_q / self.curr_ep_loss_length, 5)
+        self.recent_rewards.append(self.curr_ep_reward)
+        self.ep_timestamps.append(time.time() - self.start_time)
+        
+        # Accumulate for checkpoint
+        self.checkpoint_reward_sum += self.curr_ep_reward
+        self.checkpoint_length_sum += self.curr_ep_length
+
+        if self.curr_ep_reward > self.best_reward:
+            self.best_reward = self.curr_ep_reward
+            self.best_reward_episode = len(self.ep_rewards) - 1
+            self.best_reward_checkpoint = self.current_checkpoint
+
+        # Calculate episode averages
+        ep_avg_loss = (
+            np.round(self.curr_ep_loss / self.curr_ep_loss_length, 5)
+            if self.curr_ep_loss_length > 0 else 0
+        )
+        ep_avg_q = (
+            np.round(self.curr_ep_q / self.curr_ep_loss_length, 5)
+            if self.curr_ep_loss_length > 0 else 0
+        )
+        ep_avg_grad = (
+            np.round(self.curr_ep_grad_norm / self.curr_ep_grad_length, 5)
+            if self.curr_ep_grad_length > 0 else 0
+        )
+
         self.ep_avg_losses.append(ep_avg_loss)
         self.ep_avg_qs.append(ep_avg_q)
+        
+        # Accumulate checkpoint averages
+        self.checkpoint_loss_sum += ep_avg_loss
+        self.checkpoint_q_sum += ep_avg_q
 
+        self.episodes_since_checkpoint += 1
+        
+        # Check if we should log checkpoint
+        if self.episodes_since_checkpoint >= self.checkpoint_every:
+            self._log_checkpoint()
+        
         self.init_episode()
+
+    def _log_checkpoint(self):
+        self.current_checkpoint += 1
+        
+        # Calculate checkpoint averages
+        num_eps = self.episodes_since_checkpoint
+        avg_reward = self.checkpoint_reward_sum / num_eps
+        avg_length = self.checkpoint_length_sum / num_eps
+        avg_loss = self.checkpoint_loss_sum / num_eps
+        avg_q = self.checkpoint_q_sum / num_eps
+        
+        # Store checkpoint data
+        self.checkpoint_rewards.append(avg_reward)
+        self.checkpoint_lengths.append(avg_length)
+        self.checkpoint_losses.append(avg_loss)
+        self.checkpoint_qs.append(avg_q)
+        
+        # Store episode number (last episode in checkpoint)
+        last_episode = len(self.ep_rewards) - 1
+        self.checkpoint_episodes.append(last_episode)
+        
+        # Calculate moving averages (over last N checkpoints)
+        if len(self.checkpoint_rewards) >= self.window:
+            self.moving_avg_rewards.append(np.mean(self.checkpoint_rewards[-self.window:]))
+            self.moving_avg_lengths.append(np.mean(self.checkpoint_lengths[-self.window:]))
+            self.moving_avg_losses.append(np.mean(self.checkpoint_losses[-self.window:]))
+            self.moving_avg_qs.append(np.mean(self.checkpoint_qs[-self.window:]))
+        else:
+            self.moving_avg_rewards.append(avg_reward)
+            self.moving_avg_lengths.append(avg_length)
+            self.moving_avg_losses.append(avg_loss)
+            self.moving_avg_qs.append(avg_q)
+        
+        # Reset checkpoint accumulators
+        self.checkpoint_reward_sum = 0
+        self.checkpoint_length_sum = 0
+        self.checkpoint_loss_sum = 0
+        self.checkpoint_q_sum = 0
+        self.episodes_since_checkpoint = 0
 
     def init_episode(self):
         self.curr_ep_reward = 0.0
         self.curr_ep_length = 0
         self.curr_ep_loss = 0.0
         self.curr_ep_q = 0.0
+        self.curr_ep_grad_norm = 0.0
         self.curr_ep_loss_length = 0
+        self.curr_ep_grad_length = 0
 
-    def record(self, episode, epsilon, step):
-        mean_ep_reward = np.round(np.mean(self.ep_rewards[-100:]), 3)
-        mean_ep_length = np.round(np.mean(self.ep_lengths[-100:]), 3)
-        mean_ep_loss = np.round(np.mean(self.ep_avg_losses[-100:]), 3)
-        mean_ep_q = np.round(np.mean(self.ep_avg_qs[-100:]), 3)
-        self.moving_avg_ep_rewards.append(mean_ep_reward)
-        self.moving_avg_ep_lengths.append(mean_ep_length)
-        self.moving_avg_ep_avg_losses.append(mean_ep_loss)
-        self.moving_avg_ep_avg_qs.append(mean_ep_q)
-
+    # Record checkpoint
+    def record_checkpoint(self, episode, epsilon, step):
+        
+        # If we have pending episodes, log checkpoint first
+        if self.episodes_since_checkpoint > 0:
+            self._log_checkpoint()
+        
+        # Get latest checkpoint data
+        if len(self.checkpoint_rewards) > 0:
+            mean_reward = self.checkpoint_rewards[-1]
+            mean_length = self.checkpoint_lengths[-1]
+            mean_loss = self.checkpoint_losses[-1]
+            mean_q = self.checkpoint_qs[-1]
+        else:
+            mean_reward = 0
+            mean_length = 0
+            mean_loss = 0
+            mean_q = 0
+        
+        self.checkpoint_epsilons.append(epsilon)
+        self.checkpoint_steps.append(step)
+        
         last_record_time = self.record_time
         self.record_time = time.time()
-        time_since_last_record = np.round(self.record_time - last_record_time, 3)
-
+        time_delta = np.round(self.record_time - last_record_time, 3)
+        now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        
+        # Get moving average over last N checkpoints
+        moving_avg_reward = self.moving_avg_rewards[-1] if self.moving_avg_rewards else mean_reward
+        
         print(
-            f"Episode {episode} - "
-            f"Step {step} - "
-            f"Epsilon {epsilon} - "
-            f"Mean Reward {mean_ep_reward} - "
-            f"Mean Length {mean_ep_length} - "
-            f"Mean Loss {mean_ep_loss} - "
-            f"Mean Q Value {mean_ep_q} - "
-            f"Time Delta {time_since_last_record} - "
-            f"Time {datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}"
+            f"Checkpoint {self.current_checkpoint} - Episode {episode} - Step {step} - Epsilon {epsilon:.3f} - "
+            f"Mean Reward {mean_reward:.3f} (MA: {moving_avg_reward:.3f}) - "
+            f"Mean Length {mean_length:.1f} - Mean Loss {mean_loss:.5f} - Mean Q {mean_q:.3f} - "
+            f"Best Reward {self.best_reward:.3f} (ep {self.best_reward_episode}, ckpt {self.best_reward_checkpoint}) - "
+            f"Time Delta {time_delta}s - {now_str}"
         )
-
+        
         with open(self.save_log, "a") as f:
             f.write(
-                f"{episode:8d}{step:8d}{epsilon:10.3f}"
-                f"{mean_ep_reward:15.3f}{mean_ep_length:15.3f}{mean_ep_loss:15.3f}{mean_ep_q:15.3f}"
-                f"{time_since_last_record:15.3f}"
-                f"{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'):>20}\n"
+                f"{self.current_checkpoint:10d}{episode:10d}{step:12d}{epsilon:10.3f}"
+                f"{mean_reward:15.3f}{mean_length:15.1f}{mean_loss:15.5f}{mean_q:15.3f}"
+                f"{self.best_reward:15.3f}{time_delta:15.3f}{now_str:>20}\n"
             )
+        
+        self._plot_dashboard()
+        self._save_json_snapshot(episode, epsilon, step)
 
-        for metric in ["ep_lengths", "ep_avg_losses", "ep_avg_qs", "ep_rewards"]:
-            plt.clf()
-            plt.plot(getattr(self, f"moving_avg_{metric}"), label=f"moving_avg_{metric}")
-            plt.legend()
-            plt.savefig(getattr(self, f"{metric}_plot"))
+    # Plotting
+    def _plot_dashboard(self):
+        if len(self.checkpoint_rewards) < 1:
+            return
+            
+        n = len(self.checkpoint_rewards)
+        checkpoints = np.arange(1, n + 1)
+        
+        # For raw episode data
+        raw_n = len(self.ep_rewards)
+        raw_eps = np.arange(raw_n)
+
+        fig = plt.figure(figsize=(18, 12))
+        fig.patch.set_facecolor("#1a1a2e")
+        gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35)
+
+        # Reward panel
+        ax1 = fig.add_subplot(gs[0, :2])
+        self._style_ax(ax1)
+        ax1.plot(checkpoints, self.checkpoint_rewards, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#4cc9f0", label="Checkpoint Avg")
+        if len(self.moving_avg_rewards) > 0:
+            ax1.plot(checkpoints[:len(self.moving_avg_rewards)], self.moving_avg_rewards, 
+                    linewidth=2.5, color="#f72585", label=f"MA({self.window})")
+        ax1.set_title(f"Reward (Checkpoint every {self.checkpoint_every} episodes)", 
+                     color="white", fontsize=11, pad=6)
+        ax1.legend(fontsize=8, loc="upper left", facecolor="#2a2a4a", 
+                  labelcolor="white", framealpha=0.6)
+        
+        # Episode Length
+        ax2 = fig.add_subplot(gs[0, 2])
+        self._style_ax(ax2)
+        ax2.plot(checkpoints, self.checkpoint_lengths, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#f72585")
+        ax2.set_title("Episode Length (Checkpoint Avg)", color="white", fontsize=11, pad=6)
+        
+        # Loss
+        ax3 = fig.add_subplot(gs[1, 0])
+        self._style_ax(ax3)
+        ax3.plot(checkpoints, self.checkpoint_losses, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#ff9e00")
+        if len(self.moving_avg_losses) > 0:
+            ax3.plot(checkpoints[:len(self.moving_avg_losses)], self.moving_avg_losses, 
+                    linewidth=2, color="#06d6a0")
+        ax3.set_title("Loss", color="white", fontsize=11, pad=6)
+        
+        # Q Value
+        ax4 = fig.add_subplot(gs[1, 1])
+        self._style_ax(ax4)
+        ax4.plot(checkpoints, self.checkpoint_qs, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#7209b7")
+        if len(self.moving_avg_qs) > 0:
+            ax4.plot(checkpoints[:len(self.moving_avg_qs)], self.moving_avg_qs, 
+                    linewidth=2, color="#06d6a0")
+        ax4.set_title("Q Value", color="white", fontsize=11, pad=6)
+        
+        # Raw rewards (individual episodes, more noisy)
+        ax5 = fig.add_subplot(gs[1, 2])
+        self._style_ax(ax5)
+        ax5.plot(raw_eps, self.ep_rewards, alpha=0.2, linewidth=0.7, color="#4cc9f0")
+        ax5.set_title("Raw Episode Rewards", color="white", fontsize=11, pad=6)
+        
+        # Reward distribution
+        ax_hist = fig.add_subplot(gs[2, 0])
+        self._style_ax(ax_hist)
+        if len(self.recent_rewards) > 5:
+            ax_hist.hist(list(self.recent_rewards), bins=20,
+                        color="#4cc9f0", alpha=0.75, edgecolor="#1a1a2e")
+            ax_hist.axvline(np.mean(self.recent_rewards), color="white",
+                          linestyle="--", linewidth=1.2, label=f"mean={np.mean(self.recent_rewards):.1f}")
+            ax_hist.set_title(f"Reward Dist (last {self.window} episodes)",
+                              color="white", fontsize=11, pad=6)
+            ax_hist.legend(fontsize=8, facecolor="#2a2a4a",
+                          labelcolor="white", framealpha=0.6)
+        
+        # Epsilon decay
+        ax_eps = fig.add_subplot(gs[2, 1])
+        self._style_ax(ax_eps)
+        if self.ep_epsilon:
+            ax_eps.plot(self.ep_epsilon, color="#ffd166", linewidth=1.8)
+        ax_eps.set_title("Epsilon Decay", color="white", fontsize=11, pad=6)
+        
+        # Training progress summary
+        ax_sum = fig.add_subplot(gs[2, 2])
+        self._style_ax(ax_sum)
+        ax_sum.text(0.1, 0.8, f"Best Reward: {self.best_reward:.1f}", 
+                   color="#4cc9f0", fontsize=10, weight='bold')
+        ax_sum.text(0.1, 0.6, f"Best Episode: {self.best_reward_episode}", 
+                   color="#4cc9f0", fontsize=10)
+        ax_sum.text(0.1, 0.4, f"Checkpoints: {self.current_checkpoint}", 
+                   color="#ffd166", fontsize=10)
+        ax_sum.text(0.1, 0.2, f"Total Episodes: {len(self.ep_rewards)}", 
+                   color="#ffd166", fontsize=10)
+        ax_sum.set_xticks([])
+        ax_sum.set_yticks([])
+        ax_sum.set_title("Progress Summary", color="white", fontsize=11, pad=6)
+
+        total_time = np.round(time.time() - self.start_time, 1)
+        fig.suptitle(
+            f"RL Training Dashboard (Checkpoint every {self.checkpoint_every} episodes)  |  "
+            f"Best: {self.best_reward:.1f} @ ep{self.best_reward_episode}  |  Elapsed: {total_time}s",
+            color="white", fontsize=13, fontweight="bold", y=0.98
+        )
+
+        fig.savefig(self.save_dir / "dashboard.jpg", dpi=120,
+                    bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+
+    @staticmethod
+    def _style_ax(ax):
+        ax.set_facecolor("#12122a")
+        ax.tick_params(colors="gray", labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#333355")
+        ax.grid(True, linestyle="--", linewidth=0.4, color="#333355", alpha=0.6)
+
+    # JSON snapshot
+    def _save_json_snapshot(self, episode, epsilon, step):
+        snapshot = {
+            "checkpoint": self.current_checkpoint,
+            "episode": episode,
+            "step": step,
+            "epsilon": epsilon,
+            "best_reward": self.best_reward,
+            "best_reward_episode": self.best_reward_episode,
+            "best_reward_checkpoint": self.best_reward_checkpoint,
+            "checkpoint_every": self.checkpoint_every,
+            "recent_checkpoint_rewards": self.checkpoint_rewards[-50:],
+            "recent_checkpoint_lengths": self.checkpoint_lengths[-50:],
+            "recent_checkpoint_losses": self.checkpoint_losses[-50:],
+            "recent_checkpoint_qs": self.checkpoint_qs[-50:],
+            "moving_avg_rewards": self.moving_avg_rewards[-50:],
+            "total_episodes": len(self.ep_rewards),
+            "total_checkpoints": self.current_checkpoint
+        }
+        with open(self.save_dir / "snapshot.json", "w") as f:
+            json.dump(snapshot, f, indent=2)
