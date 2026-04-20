@@ -63,6 +63,9 @@ class MetricLogger:
         self.checkpoint_q_sum = 0
         self.checkpoint_epsilon_sum = 0
 
+        # Current episode state
+        self.current_epsilon = 1.0
+        
         self.init_episode()
         self.record_time = time.time()
         self.start_time = time.time()
@@ -78,17 +81,26 @@ class MetricLogger:
         if grad_norm is not None:
             self.curr_ep_grad_norm += grad_norm
             self.curr_ep_grad_length += 1
+    
+    # Method to update epsilon
+    def update_epsilon(self, epsilon):
+        self.current_epsilon = epsilon
 
     # Per-episode logging
     def log_episode(self):
+        # Record episode metrics
         self.ep_rewards.append(self.curr_ep_reward)
         self.ep_lengths.append(self.curr_ep_length)
         self.recent_rewards.append(self.curr_ep_reward)
         self.ep_timestamps.append(time.time() - self.start_time)
         
+        # Record epsilon for this episode
+        self.ep_epsilon.append(self.current_epsilon)
+        
         # Accumulate for checkpoint
         self.checkpoint_reward_sum += self.curr_ep_reward
         self.checkpoint_length_sum += self.curr_ep_length
+        self.checkpoint_epsilon_sum += self.current_epsilon
 
         if self.curr_ep_reward > self.best_reward:
             self.best_reward = self.curr_ep_reward
@@ -133,12 +145,14 @@ class MetricLogger:
         avg_length = self.checkpoint_length_sum / num_eps
         avg_loss = self.checkpoint_loss_sum / num_eps
         avg_q = self.checkpoint_q_sum / num_eps
+        avg_epsilon = self.checkpoint_epsilon_sum / num_eps
         
         # Store checkpoint data
         self.checkpoint_rewards.append(avg_reward)
         self.checkpoint_lengths.append(avg_length)
         self.checkpoint_losses.append(avg_loss)
         self.checkpoint_qs.append(avg_q)
+        self.checkpoint_epsilons.append(avg_epsilon)
         
         # Store episode number (last episode in checkpoint)
         last_episode = len(self.ep_rewards) - 1
@@ -161,6 +175,7 @@ class MetricLogger:
         self.checkpoint_length_sum = 0
         self.checkpoint_loss_sum = 0
         self.checkpoint_q_sum = 0
+        self.checkpoint_epsilon_sum = 0
         self.episodes_since_checkpoint = 0
 
     def init_episode(self):
@@ -191,7 +206,6 @@ class MetricLogger:
             mean_loss = 0
             mean_q = 0
         
-        self.checkpoint_epsilons.append(epsilon)
         self.checkpoint_steps.append(step)
         
         last_record_time = self.record_time
@@ -227,17 +241,13 @@ class MetricLogger:
             
         n = len(self.checkpoint_rewards)
         checkpoints = np.arange(1, n + 1)
-        
-        # For raw episode data
-        raw_n = len(self.ep_rewards)
-        raw_eps = np.arange(raw_n)
 
-        fig = plt.figure(figsize=(18, 12))
+        fig = plt.figure(figsize=(18, 10))
         fig.patch.set_facecolor("#1a1a2e")
-        gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.45, wspace=0.35)
+        gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.35)
 
-        # Reward panel
-        ax1 = fig.add_subplot(gs[0, :2])
+        # Reward panel (spans full width of top row)
+        ax1 = fig.add_subplot(gs[0, :])
         self._style_ax(ax1)
         ax1.plot(checkpoints, self.checkpoint_rewards, 'o-', alpha=0.5, 
                 linewidth=1.2, markersize=4, color="#4cc9f0", label="Checkpoint Avg")
@@ -245,83 +255,64 @@ class MetricLogger:
             ax1.plot(checkpoints[:len(self.moving_avg_rewards)], self.moving_avg_rewards, 
                     linewidth=2.5, color="#f72585", label=f"MA({self.window})")
         ax1.set_title(f"Reward (Checkpoint every {self.checkpoint_every} episodes)", 
-                     color="white", fontsize=11, pad=6)
-        ax1.legend(fontsize=8, loc="upper left", facecolor="#2a2a4a", 
+                     color="white", fontsize=12, pad=6)
+        ax1.legend(fontsize=9, loc="upper left", facecolor="#2a2a4a", 
                   labelcolor="white", framealpha=0.6)
         
-        # Episode Length
-        ax2 = fig.add_subplot(gs[0, 2])
+        # Loss panel
+        ax2 = fig.add_subplot(gs[1, 0])
         self._style_ax(ax2)
-        ax2.plot(checkpoints, self.checkpoint_lengths, 'o-', alpha=0.5, 
-                linewidth=1.2, markersize=4, color="#f72585")
-        ax2.set_title("Episode Length (Checkpoint Avg)", color="white", fontsize=11, pad=6)
-        
-        # Loss
-        ax3 = fig.add_subplot(gs[1, 0])
-        self._style_ax(ax3)
-        ax3.plot(checkpoints, self.checkpoint_losses, 'o-', alpha=0.5, 
-                linewidth=1.2, markersize=4, color="#ff9e00")
+        ax2.plot(checkpoints, self.checkpoint_losses, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#ff9e00", label="Loss")
         if len(self.moving_avg_losses) > 0:
-            ax3.plot(checkpoints[:len(self.moving_avg_losses)], self.moving_avg_losses, 
-                    linewidth=2, color="#06d6a0")
-        ax3.set_title("Loss", color="white", fontsize=11, pad=6)
+            ax2.plot(checkpoints[:len(self.moving_avg_losses)], self.moving_avg_losses, 
+                    linewidth=2, color="#06d6a0", label=f"MA({self.window})")
+        ax2.set_title("Loss", color="white", fontsize=11, pad=6)
+        ax2.legend(fontsize=8, loc="upper right", facecolor="#2a2a4a", 
+                  labelcolor="white", framealpha=0.6)
         
-        # Q Value
-        ax4 = fig.add_subplot(gs[1, 1])
-        self._style_ax(ax4)
-        ax4.plot(checkpoints, self.checkpoint_qs, 'o-', alpha=0.5, 
-                linewidth=1.2, markersize=4, color="#7209b7")
+        # Q Value panel
+        ax3 = fig.add_subplot(gs[1, 1])
+        self._style_ax(ax3)
+        ax3.plot(checkpoints, self.checkpoint_qs, 'o-', alpha=0.5, 
+                linewidth=1.2, markersize=4, color="#7209b7", label="Q Value")
         if len(self.moving_avg_qs) > 0:
-            ax4.plot(checkpoints[:len(self.moving_avg_qs)], self.moving_avg_qs, 
-                    linewidth=2, color="#06d6a0")
-        ax4.set_title("Q Value", color="white", fontsize=11, pad=6)
+            ax3.plot(checkpoints[:len(self.moving_avg_qs)], self.moving_avg_qs, 
+                    linewidth=2, color="#06d6a0", label=f"MA({self.window})")
+        ax3.set_title("Q Value", color="white", fontsize=11, pad=6)
+        ax3.legend(fontsize=8, loc="upper left", facecolor="#2a2a4a", 
+                  labelcolor="white", framealpha=0.6)
         
-        # Raw rewards (individual episodes, more noisy)
-        ax5 = fig.add_subplot(gs[1, 2])
-        self._style_ax(ax5)
-        ax5.plot(raw_eps, self.ep_rewards, alpha=0.2, linewidth=0.7, color="#4cc9f0")
-        ax5.set_title("Raw Episode Rewards", color="white", fontsize=11, pad=6)
+        # Epsilon decay panel
+        ax4 = fig.add_subplot(gs[1, 2])
+        self._style_ax(ax4)
         
-        # Reward distribution
-        ax_hist = fig.add_subplot(gs[2, 0])
-        self._style_ax(ax_hist)
-        if len(self.recent_rewards) > 5:
-            ax_hist.hist(list(self.recent_rewards), bins=20,
-                        color="#4cc9f0", alpha=0.75, edgecolor="#1a1a2e")
-            ax_hist.axvline(np.mean(self.recent_rewards), color="white",
-                          linestyle="--", linewidth=1.2, label=f"mean={np.mean(self.recent_rewards):.1f}")
-            ax_hist.set_title(f"Reward Dist (last {self.window} episodes)",
-                              color="white", fontsize=11, pad=6)
-            ax_hist.legend(fontsize=8, facecolor="#2a2a4a",
-                          labelcolor="white", framealpha=0.6)
+        # Plot epsilon
+        if len(self.checkpoint_epsilons) > 0:
+            ax4.plot(checkpoints, self.checkpoint_epsilons, 
+                    'o-', linewidth=2, markersize=4, color="#4cc9f0", label="Epsilon")
+        ax4.set_xlabel("Checkpoint", color="gray", fontsize=9)
+        ax4.set_ylabel("Epsilon", color="#4cc9f0", fontsize=9)
+        ax4.tick_params(axis='y', labelcolor="#4cc9f0")
+        ax4.set_title("Epsilon Decay", color="white", fontsize=11, pad=6)
+        ax4.legend(fontsize=8, loc="upper right", facecolor="#2a2a4a", 
+                  labelcolor="white", framealpha=0.6)
         
-        # Epsilon decay
-        ax_eps = fig.add_subplot(gs[2, 1])
-        self._style_ax(ax_eps)
-        if self.ep_epsilon:
-            ax_eps.plot(self.ep_epsilon, color="#ffd166", linewidth=1.8)
-        ax_eps.set_title("Epsilon Decay", color="white", fontsize=11, pad=6)
-        
-        # Training progress summary
-        ax_sum = fig.add_subplot(gs[2, 2])
-        self._style_ax(ax_sum)
-        ax_sum.text(0.1, 0.8, f"Best Reward: {self.best_reward:.1f}", 
-                   color="#4cc9f0", fontsize=10, weight='bold')
-        ax_sum.text(0.1, 0.6, f"Best Episode: {self.best_reward_episode}", 
-                   color="#4cc9f0", fontsize=10)
-        ax_sum.text(0.1, 0.4, f"Checkpoints: {self.current_checkpoint}", 
-                   color="#ffd166", fontsize=10)
-        ax_sum.text(0.1, 0.2, f"Total Episodes: {len(self.ep_rewards)}", 
-                   color="#ffd166", fontsize=10)
-        ax_sum.set_xticks([])
-        ax_sum.set_yticks([])
-        ax_sum.set_title("Progress Summary", color="white", fontsize=11, pad=6)
-
+        # Add training progress summary as text on the figure
         total_time = np.round(time.time() - self.start_time, 1)
+        current_eps = self.checkpoint_epsilons[-1] if self.checkpoint_epsilons else 0
+        
+        summary_text = (
+            f"Best Reward: {self.best_reward:.1f} @ ep {self.best_reward_episode} | "
+            f"Checkpoints: {self.current_checkpoint} | "
+            f"Total Episodes: {len(self.ep_rewards)} | "
+            f"Epsilon: {current_eps:.4f} | "
+            f"Elapsed: {total_time}s"
+        )
+        
         fig.suptitle(
-            f"RL Training Dashboard (Checkpoint every {self.checkpoint_every} episodes)  |  "
-            f"Best: {self.best_reward:.1f} @ ep{self.best_reward_episode}  |  Elapsed: {total_time}s",
-            color="white", fontsize=13, fontweight="bold", y=0.98
+            f"RL Training Dashboard\n{summary_text}",
+            color="white", fontsize=12, fontweight="bold", y=0.98
         )
 
         fig.savefig(self.save_dir / "dashboard.jpg", dpi=120,
@@ -348,9 +339,9 @@ class MetricLogger:
             "best_reward_checkpoint": self.best_reward_checkpoint,
             "checkpoint_every": self.checkpoint_every,
             "recent_checkpoint_rewards": self.checkpoint_rewards[-50:],
-            "recent_checkpoint_lengths": self.checkpoint_lengths[-50:],
             "recent_checkpoint_losses": self.checkpoint_losses[-50:],
             "recent_checkpoint_qs": self.checkpoint_qs[-50:],
+            "recent_checkpoint_epsilons": self.checkpoint_epsilons[-50:],
             "moving_avg_rewards": self.moving_avg_rewards[-50:],
             "total_episodes": len(self.ep_rewards),
             "total_checkpoints": self.current_checkpoint

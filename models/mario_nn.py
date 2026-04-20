@@ -12,9 +12,9 @@ class MarioNet(nn.Module):
         if h <= 0 or w <= 0:
             raise ValueError(f"Height and Width must be > 0. Got: {h}x{w}")
 
-        self.online = self.__build_cnn(c, h, w, output_dim)
+        self.online = self._build_cnn(c, h, w, output_dim)
 
-        self.target = self.__build_cnn(c, h, w, output_dim)
+        self.target = self._build_cnn(c, h, w, output_dim)
         self.target.load_state_dict(self.online.state_dict())
 
         # Q target parameters are frozen.
@@ -27,13 +27,13 @@ class MarioNet(nn.Module):
         elif model == "target":
             return self.target(input)
         
-    def __get_conv_output_shape(self, shape, conv_block):
+    def _get_conv_output_shape(self, shape, conv_block):
         with torch.no_grad():
             dummy_input = torch.zeros(1, *shape)
             dummy_output = conv_block(dummy_input)
             return dummy_output.numel()
 
-    def __build_cnn(self, c, h, w, output_dim):
+    def _build_cnn(self, c, h, w, output_dim):
         # Convolution feature layers
         feature_layer = nn.Sequential(
             nn.Conv2d(in_channels=c, out_channels=32, kernel_size=8, stride=4),
@@ -46,7 +46,7 @@ class MarioNet(nn.Module):
         )
 
         # Input features for decision layer
-        num_flatten_features = self.__get_conv_output_shape((c, h, w), feature_layer)
+        num_flatten_features = self._get_conv_output_shape((c, h, w), feature_layer)
         
         # Fully connected decision layers
         decision_layer = nn.Sequential(

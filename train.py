@@ -1,41 +1,22 @@
 import torch
 import datetime
+import argparse
 from pathlib import Path
 from environments.smb_env import make_smb_env
 from agents.mario import Mario
 from metrics.logger import MetricLogger
 
-# Setup
-use_cuda = torch.cuda.is_available()
-device = "cuda" if use_cuda else "cpu"
-print(f"Using CUDA: {use_cuda}\n")
+# Helper function to load a checkpoint
+def _load_checkpoint(checkpoint_path, mario_agent):
+    checkpoint = torch.load(checkpoint_path)
+    mario_agent.net.load_state_dict(checkpoint["model"])
+    mario_agent.exploration_rate = checkpoint["exploration_rate"]
+    mario_agent.curr_step = checkpoint["step"]
+    print(f"Resumed from {checkpoint_path} at step {checkpoint['step']}")
+    return checkpoint.get("episode", 0) + 1
 
-save_dir = Path("output") / datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-save_dir.mkdir(parents=True)
-
-env = make_smb_env()
-
-mario = Mario(
-    state_dim=(4, 84, 84),
-    action_dim=env.action_space.n,
-    save_dir=save_dir,
-    device=device,
-)
-logger = MetricLogger(save_dir)
-
-# Hyperparameters
-EPISODES        = 4000
-SAVE_EVERY      = 20    # periodic checkpoint interval
-LOG_EVERY       = 20    # how often record() is called
-WARMUP_EPISODES = 80    # episodes before we start checking for "best" model
-
-# State tracking
-best_mean_reward  = float("-inf")
-episode_rewards   = []   # raw per-episode totals for computing the running mean
-flags_captured    = 0
-total_steps       = 0
-
-def _save_checkpoint(tag: str):
+# Helper function to save a checkpoint
+def _save_checkpoint(tag):
     # Save a checkpoint of the current model
     path = save_dir / f"mario_{tag}.chkpt"
     torch.save(
@@ -48,9 +29,57 @@ def _save_checkpoint(tag: str):
     )
     return path
 
+# CUDA Setup
+use_cuda = torch.cuda.is_available()
+device = "cuda" if use_cuda else "cpu"
+print(f"Using CUDA: {use_cuda}\n")
+
+# Parse arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--resume", type=str, default=None, help="Path to .chkpt file to resume from")
+args = parser.parse_args()
+
+# Output directory
+save_dir = Path("output") / datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+save_dir.mkdir(parents=True)
+
+# Initialize env
+env = make_smb_env()
+
+# Initialize agent
+mario = Mario(
+    state_dim=(4, 84, 84),
+    action_dim=env.action_space.n,
+    save_dir=save_dir,
+    device=device,
+)
+
+
+# Hyperparameters
+EPISODES        = 4000
+SAVE_EVERY      = 20    # periodic checkpoint interval
+LOG_EVERY       = 20    # how often record() is called
+WARMUP_EPISODES = 80    # episodes before we start checking for "best" model
+
+
+# State tracking
+best_mean_reward  = float("-inf")
+episode_rewards   = []   # raw per-episode totals for computing the running mean
+flags_captured    = 0
+total_steps       = 0
+
+# Resume functionality
+start_episode = _load_checkpoint(args.resume, mario) if args.resume else 0
+
+# Record training metrics
+logger = MetricLogger(
+    save_dir, 
+    checkpoint_every=20, 
+    window=5
+)
 
 # Training loop
-for e in range(EPISODES):
+for e in range(start_episode, EPISODES):
     state = env.reset()
     ep_reward   = 0.0
     ep_flag_get = False
@@ -117,6 +146,7 @@ for e in range(EPISODES):
             epsilon=mario.exploration_rate,
             step=mario.curr_step,
         )
+        print(f"\tCurrent agent learning rate: {mario.get_current_lr():.6f}")
 
     # Periodic checkpoint
     if e % SAVE_EVERY == 0 and e != 0:

@@ -20,23 +20,34 @@ class Mario:
 
         # Initialize learning parameters
         self.exploration_rate       = 1
-        self.exploration_rate_decay = 0.99999611
+        self.exploration_rate_decay = 0.99999333
         self.exploration_rate_min   = 0.1
 
-        self.discount   = 0.9   # Gamma
+        self.discount   = 0.95  # Gamma
         self.curr_step  = 0     # The current step
         self.save_every = 5e5   # Save after every n experiences
 
-        self.burnin = 1e4       # Minimum number of experiences before training
+        self.burnin      = 1e4  # Minimum number of experiences before training
         self.learn_every = 3    # Number of experiences between updates to Q_online
-        self.sync_every = 1e4   # Number of experiences between Q_target & Q_online sync
+        self.sync_every  = 1e4  # Number of experiences between Q_target & Q_online sync
 
-        self.optimizer  = torch.optim.Adam(self.net.parameters(), lr=0.00025)
-        self.loss_fn    = torch.nn.SmoothL1Loss()
+        self.lr0 = 2.5e-4
+        self.lrf = 1.0e-5
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr0)
+        self.loss_fn   = torch.nn.SmoothL1Loss()
+
+        # LR scheduler
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=365000,      # steps to reach lrf
+            eta_min=self.lrf
+        )
 
         # Initialize memory parameters
-        self.memory     = TensorDictReplayBuffer(storage=LazyMemmapStorage(75000, device=torch.device("cpu")))
-        self.batch_size = 32
+        self.batch_size = 64
+        self.memory = TensorDictReplayBuffer(
+            storage=LazyMemmapStorage(75000, device=torch.device("cpu")),
+        )
 
     # Given a state, choose an action and update step
     def act(self, state):
@@ -63,24 +74,29 @@ class Mario:
     def cache(self, state, next_state, action, reward, done):
         def first_if_tuple(x):
             return x[0] if isinstance(x, tuple) else x
-        state = first_if_tuple(state).__array__()
+        state      = first_if_tuple(state).__array__()
         next_state = first_if_tuple(next_state).__array__()
 
-        state       = torch.tensor(state)
-        next_state  = torch.tensor(next_state)
-        action      = torch.tensor([action])
-        reward      = torch.tensor([reward])
-        done        = torch.tensor([done])
+        state      = torch.tensor(state)
+        next_state = torch.tensor(next_state)
+        action     = torch.tensor([action])
+        reward     = torch.tensor([reward])
+        done       = torch.tensor([done])
 
-        reward = np.clip(reward, -1, 1) # Reward clipping
-        self.memory.add(TensorDict({"state": state, "next_state": next_state, "action": action, "reward": reward, "done": done}, batch_size=[]))
+        self.memory.add(TensorDict(
+            {"state": state, "next_state": next_state, "action": action, "reward": reward, "done": done},
+            batch_size=[]
+        ))
 
     # Retrieve batch of experiences
     def recall(self):
-        batch = self.memory.sample(self.batch_size).to(self.device)
-        state, next_state, action, reward, done = (batch.get(key) for key in ("state", "next_state", "action", "reward", "done"))
+        batch = self.memory.sample(self.batch_size)
+        batch = batch.to(self.device)
+        state, next_state, action, reward, done = (
+            batch.get(key) for key in ("state", "next_state", "action", "reward", "done")
+        )
         return state, next_state, action.squeeze(), reward.squeeze(), done.squeeze()
-    
+
     # Q_online = Q(s, a) -> Expected reward
     def td_estimate(self, state, action):
         current_Q = self.net(state, model="online")[
@@ -88,23 +104,31 @@ class Mario:
         ]
         return current_Q
 
-    # Q_target = R + gamma * max(Q(s', a'))
+    # Q_target = R + gamma * max(Q(s', a'))  [Double DQN]
     @torch.no_grad()
     def td_target(self, reward, next_state, done):
         next_state_Q = self.net(next_state, model="online")
-        best_action = torch.argmax(next_state_Q, axis=1)
+        best_action  = torch.argmax(next_state_Q, axis=1)
         next_Q = self.net(next_state, model="target")[
             np.arange(0, self.batch_size), best_action
         ]
         return (reward + (1 - done.float()) * self.discount * next_Q).float()
-    
-    # Gradient descent
+
+    # Gradient descent with IS weights from PER
     def update_Q_online(self, td_estimate, td_target):
-        loss = self.loss_fn(td_estimate, td_target)
+        loss = torch.nn.functional.smooth_l1_loss(td_estimate, td_target)
+
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.net.online.parameters(), max_norm=1.0)  # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.net.online.parameters(), max_norm=1.0)
         self.optimizer.step()
+
+        # Enforce minimum LR, scheduler can't go below lr_min
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = max(param_group["lr"], self.lrf)
+
+        self.scheduler.step()
+
         return loss.item()
 
     # Stabilizer function
@@ -133,6 +157,11 @@ class Mario:
 
         if self.curr_step % self.learn_every != 0:
             return None, None
+        
+        # Learn less frequently early on to avoid overfitting sparse buffer
+        effective_learn_every = max(self.learn_every, 10 - self.curr_step // 10000)
+        if self.curr_step % effective_learn_every != 0:
+            return None, None
 
         # Sample from memory
         state, next_state, action, reward, done = self.recall()
@@ -146,4 +175,12 @@ class Mario:
         # Backpropagate loss through Q_online
         loss = self.update_Q_online(td_est, td_tgt)
 
+        # Get the current learning rate from the optimizer
+        current_lr = self.optimizer.param_groups[0]['lr']
+
         return (td_est.mean().item(), loss)
+    
+    # Helper function to get current learning rate
+    def get_current_lr(self):
+        # Returns the LR of the first parameter group
+        return self.optimizer.param_groups[0]['lr']
