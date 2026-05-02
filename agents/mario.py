@@ -37,10 +37,9 @@ class Mario:
         self.loss_fn   = torch.nn.SmoothL1Loss()
 
         # LR scheduler
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=365000,      # steps to reach lrf
-            eta_min=self.lrf
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            self.optimizer, 
+            gamma=0.99997425
         )
 
         # Initialize memory parameters
@@ -80,6 +79,13 @@ class Mario:
         state      = torch.tensor(state)
         next_state = torch.tensor(next_state)
         action     = torch.tensor([action])
+
+        # Reward scaling
+        if reward > 10:
+            reward = reward / 100.0
+        else:
+            reward = reward / 10.0
+
         reward     = torch.tensor([reward])
         done       = torch.tensor([done])
 
@@ -116,7 +122,7 @@ class Mario:
 
     # Gradient descent with IS weights from PER
     def update_Q_online(self, td_estimate, td_target):
-        loss = torch.nn.functional.smooth_l1_loss(td_estimate, td_target)
+        loss = torch.nn.functional.huber_loss(td_estimate, td_target, delta=1.0)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -128,6 +134,9 @@ class Mario:
             param_group["lr"] = max(param_group["lr"], self.lrf)
 
         self.scheduler.step()
+        for param_group in self.optimizer.param_groups:
+            if param_group["lr"] < self.lrf:
+                param_group["lr"] = self.lrf
 
         return loss.item()
 

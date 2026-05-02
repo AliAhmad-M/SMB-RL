@@ -8,8 +8,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 env = make_smb_env(render_mode="human")
 
 # Re-initialize agent
-save_dir = Path("output") / "2026-04-20T14-12-52"
-checkpoint_path = save_dir / "mario_final.chkpt"
+save_dir = Path("output") / "2026-04-21T14-14-23"
+checkpoint_path = save_dir / "mario_ep2240.chkpt"
 
 mario = Mario(
     state_dim=(4, 84, 84), 
@@ -23,7 +23,7 @@ checkpoint = torch.load(checkpoint_path, map_location=device)
 mario.net.load_state_dict(checkpoint["model"])
 
 # Evaluation Loop
-mario.exploration_rate = 0 
+mario.exploration_rate = 0
 
 state = env.reset()
 done = False
