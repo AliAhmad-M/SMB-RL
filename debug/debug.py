@@ -1,12 +1,11 @@
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import matplotlib.pyplot as plt
 from environments.smb_env import make_smb_env
 
 env = make_smb_env()
-
-# Reset
 state = env.reset()
 
-# Move right
 for _ in range(24):
     state, reward, done, trunc, info = env.step(0)
     if done:

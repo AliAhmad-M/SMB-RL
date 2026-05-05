@@ -78,7 +78,7 @@ env = make_smb_env()
 
 # Initialize agent
 mario = Mario(
-    state_dim=(4, 84, 84),
+    state_dim=(4, 12, 12),
     action_dim=env.action_space.n,
     save_dir=save_dir,
     device=device,
@@ -162,6 +162,8 @@ for e in range(start_episode, EPISODES):
     flags_captured += int(ep_flag_get)
     episode_rewards.append(ep_reward)
     logger.log_episode()
+
+    mario.on_episode_end()
 
     # Best-model tracking after warmup
     # Use absolute episode index so warmup threshold is consistent across resumes

@@ -117,7 +117,7 @@ def save_video(frames: list, path: Path, fps: int = FPS):
     for f in frames:
         writer.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
     writer.release()
-    print(f"\tVideo saved → {path}  ({len(frames)} frames, {len(frames)/fps:.1f}s)")
+    print(f"\tVideo saved -> {path}  ({len(frames)} frames, {len(frames)/fps:.1f}s)")
 
 
 # Metadata writer
@@ -158,7 +158,7 @@ def save_metadata(results: list, best_run: int, best_reward: float, best_frames:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(metadata, f, indent=2)
-    print(f"\tMetadata saved → {path}")
+    print(f"\tMetadata saved -> {path}")
 
 
 # Main

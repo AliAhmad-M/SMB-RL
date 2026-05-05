@@ -36,9 +36,9 @@ class MarioNet(nn.Module):
     def _build_cnn(self, c, h, w, output_dim):
         # Convolution feature layers
         feature_layer = nn.Sequential(
-            nn.Conv2d(in_channels=c, out_channels=32, kernel_size=8, stride=4),
+            nn.Conv2d(in_channels=c, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
             nn.ReLU(),
@@ -50,9 +50,9 @@ class MarioNet(nn.Module):
         
         # Fully connected decision layers
         decision_layer = nn.Sequential(
-            nn.Linear(num_flatten_features, 512),
+            nn.Linear(num_flatten_features, 256),
             nn.ReLU(),
-            nn.Linear(512, output_dim)
+            nn.Linear(256, output_dim)
         )
 
         return nn.Sequential(
