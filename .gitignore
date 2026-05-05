@@ -3,6 +3,7 @@ venv/
 env/
 
 output/
+runs/
 
 __pycache__/
 *.pyc
