@@ -10,7 +10,7 @@ def make_smb_env(render_mode="rgb_array"):
     warnings.filterwarnings("ignore", category=UserWarning, module="gym")
     
     # Initialize SMB environment
-    env = gym_super_mario_bros.make("SuperMarioBros-1-1-v0", render_mode=render_mode, apply_api_compatibility=True)
+    env = gym_super_mario_bros.make("SuperMarioBros-2-1-v0", render_mode=render_mode, apply_api_compatibility=True)
 
     # Limit the action-space
     #   0. Sprint right

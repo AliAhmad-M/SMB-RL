@@ -19,7 +19,7 @@ from agents.mario import Mario
 # Config
 NUM_RUNS   = 100
 SAVE_DIR   = Path("runs") / datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-CKPT_PATH  = Path("output") / "2026-05-02T12-06-13" / "mario_final.chkpt"
+CKPT_PATH  = Path("output") / "2026-05-05T23-04-06" / "mario_final.chkpt"
 VIDEO_OUT  = SAVE_DIR / "best_run.mp4"
 META_OUT   = SAVE_DIR / "eval_metadata.json"
 FPS        = 60
@@ -33,7 +33,7 @@ SKIP    = 4
 def make_raw_env():
     warnings.filterwarnings("ignore", category=UserWarning, module="gym")
     env = gym_super_mario_bros.make(
-        "SuperMarioBros-1-1-v2",
+        "SuperMarioBros-2-1-v0",
         render_mode="rgb_array",
         apply_api_compatibility=True,
     )
@@ -44,14 +44,14 @@ def make_raw_env():
 # Agent setup
 def load_agent(action_dim: int) -> Mario:
     mario = Mario(
-        state_dim=(4, 84, 84),
+        state_dim=(4, 12, 12),
         action_dim=action_dim,
         save_dir=SAVE_DIR,
         device=DEVICE,
     )
     ckpt = torch.load(CKPT_PATH, map_location=DEVICE)
     mario.net.load_state_dict(ckpt["model"])
-    mario.exploration_rate = 0
+    mario.exploration_rate = 0.05
     return mario
 
 

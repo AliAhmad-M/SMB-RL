@@ -67,6 +67,7 @@ print(f"Using CUDA: {use_cuda}\n")
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--resume", type=str, default=None, help="Path to .chkpt file to resume from")
+parser.add_argument("--transfer", type=str, default=None, help="Path to .chkpt file to transfer weights from")
 args = parser.parse_args()
 
 # Output directory
@@ -105,6 +106,13 @@ if args.resume:
         flags_captured,
         total_steps,
     ) = _load_checkpoint(args.resume, mario)
+
+# Transfer
+elif args.transfer:
+    ckpt = torch.load(args.transfer, map_location=device)
+    mario.net.load_state_dict(ckpt["model"])
+    start_episode = 0
+
 else:
     start_episode = 0
 
