@@ -13,6 +13,7 @@ class SkipFrame(gym.Wrapper):
     def step(self, action):
         total_reward = 0.0
         for i in range(self._skip):
+            # Accumulate reward over skipped frames
             obs, reward, done, trunk, info = self.env.step(action)
             total_reward += reward
             if done:
@@ -58,13 +59,14 @@ _GRID_ROWS    = 15
 _SPRITE_H     = 16
 _STATUS_BAR_H = 32
 
-
+# Convert visual environment into static tiles
 class TileObservation(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
         h, w, c = self.observation_space.shape
         self.observation_space = Box(low=0, high=255, shape=(h, w, c), dtype=np.uint8)
 
+    # Initialize canvas and draw semantic representation from RAM
     def observation(self, observation: np.ndarray) -> np.ndarray:
         ram = self.env.unwrapped.env.ram
         canvas = np.full((_SCREEN_H, _SCREEN_W, 3), 255, dtype=np.uint8)
@@ -73,12 +75,14 @@ class TileObservation(gym.ObservationWrapper):
         self._draw_mario(canvas, ram)
         return canvas
 
+    # Color a 16x16 pixel block on the grid
     def _fill_tile(self, canvas, row, col, value):
         if 0 <= row < _GRID_ROWS and 0 <= col < _GRID_COLS:
             y0 = row * _TILE_PX
             x0 = col * _TILE_PX
             canvas[y0:y0 + _TILE_PX, x0:x0 + _TILE_PX] = value
 
+    # Calculate RAM address and retrieve tile identifier
     def _get_tile_id(self, ram, x_level, y_screen):
         page  = (x_level // 256) % 2
         sub_x = (x_level % 256) // 16
@@ -88,6 +92,7 @@ class TileObservation(gym.ObservationWrapper):
         addr = _TILEMAP_BASE + page * _PAGE_STRIDE + sub_y * _TILEMAP_COLS + sub_x
         return int(ram[addr])
 
+    # Calculate horizontal viewport and draw ground and pipes
     def _draw_static_tiles(self, canvas, ram):
         mario_level_x  = int(ram[_MARIO_X_IN_LEVEL]) * 256 + int(ram[_MARIO_X_ON_SCREEN])
         mario_screen_x = int(ram[_MARIO_X_SCREEN_OFFSET])
@@ -107,6 +112,7 @@ class TileObservation(gym.ObservationWrapper):
                 else:
                     self._fill_tile(canvas, row, col, SOLID)
 
+    # Identify active enemy slots and draw them on canvas
     def _draw_enemies(self, canvas, ram):
         mario_level_x  = int(ram[_MARIO_X_IN_LEVEL]) * 256 + int(ram[_MARIO_X_ON_SCREEN])
         mario_screen_x = int(ram[_MARIO_X_SCREEN_OFFSET])
@@ -122,6 +128,7 @@ class TileObservation(gym.ObservationWrapper):
             row = int(np.clip(y_screen, 0, _SCREEN_H - 1)) // _TILE_PX
             self._fill_tile(canvas, row, col, ENEMY)
 
+    # Determine Mario's grid position and draw indicator
     def _draw_mario(self, canvas, ram):
         x = int(ram[_MARIO_X_SCREEN_OFFSET]) + 12
         y = int(ram[_MARIO_Y_SCREEN_OFFSET]) + _SPRITE_H
@@ -141,6 +148,7 @@ class CropObservation(gym.ObservationWrapper):
         self.top    = top
         self.bottom = bottom
 
+        # Define new observation space dimensions after cropping
         old_shape = self.observation_space.shape
         new_h = old_shape[0] - top - bottom
         new_w = old_shape[1] - left - right
@@ -148,6 +156,7 @@ class CropObservation(gym.ObservationWrapper):
             low=0, high=255, shape=(new_h, new_w, old_shape[2]), dtype=np.uint8
         )
 
+    # Slices the array to remove unwanted margins
     def observation(self, observation):
         h, w, c = observation.shape
         return observation[
@@ -164,6 +173,7 @@ class GrayScaleObservation(gym.ObservationWrapper):
         h, w = self.observation_space.shape[:2]
         self.observation_space = Box(low=0, high=255, shape=(h, w), dtype=np.uint8)
 
+    # Map RGB colors to grayscale intensity values
     def observation(self, observation):
         gray = np.zeros(observation.shape[:2], dtype=np.uint8)
         
@@ -180,6 +190,8 @@ class GrayScaleObservation(gym.ObservationWrapper):
 class ResizeObservation(gym.ObservationWrapper):
     def __init__(self, env, shape):
         super().__init__(env)
+        
+        # Configure output dimensions for image resizing
         self.shape = (shape, shape) if isinstance(shape, int) else tuple(shape)
         self.observation_space = Box(low=0.0, high=1.0, shape=self.shape, dtype=np.float32)
 

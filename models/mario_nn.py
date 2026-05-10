@@ -26,7 +26,7 @@ class MarioNet(nn.Module):
             return self.online(input)
         elif model == "target":
             return self.target(input)
-        
+    
     def _get_conv_output_shape(self, shape, conv_block):
         with torch.no_grad():
             dummy_input = torch.zeros(1, *shape)
