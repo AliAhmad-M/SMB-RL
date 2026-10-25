@@ -28,7 +28,6 @@ PIPE    = np.array([34,  139, 34],  dtype=np.uint8)  # green pipes
 ENEMY   = np.array([220, 50,  50],  dtype=np.uint8)  # red enemies
 MARIO   = np.array([30,  100, 220], dtype=np.uint8)  # blue Mario
 
-
 # RAM constants
 _ENEMY_DRAWN            = 0x0F
 _ENEMY_TYPE             = 0x16
