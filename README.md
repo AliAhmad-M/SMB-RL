@@ -15,14 +15,15 @@ A reinforcement-learning agent that learns to play **Super Mario Bros.** from sc
 
 ```mermaid
 flowchart LR
-    A[NES emulator<br/>+ RAM] --> B[SkipFrame<br/>repeat action x4]
-    B --> C[TileObservation<br/>RAM to color tile map]
-    C --> D[Crop<br/>256x240 to 192x176]
-    D --> E[Grayscale<br/>4 intensity levels]
-    E --> F[Resize<br/>12x12]
-    F --> G[FrameStack<br/>4 frames]
-    G --> H[(4, 12, 12)<br/>to the network]
+    A["NES emulator<br/>+ RAM"] --> B["SkipFrame<br/>repeat action x4"]
+    B --> C["TileObservation<br/>RAM to color tile map"]
+    C --> D["Crop<br/>256x240 to 192x176"]
+    D --> E["Grayscale<br/>4 intensity levels"]
+    E --> F["Resize<br/>12x12"]
+    F --> G["FrameStack<br/>4 frames"]
+    G --> H["Network input<br/>shape 4 x 12 x 12"]
 ```
+
 
 | Element | Meaning |
 |---|---|
