@@ -1,17 +1,3 @@
-#!/usr/bin/env python3
-"""
-Mario RL Studio - one-file GUI for training and testing the Mario DQN agent.
-
-Put this file in the project root (next to train.py / eval.py) and run:
-
-    pip install PySide6 matplotlib
-    python mario_gui.py
-
-Training / testing run in a child process (this same file launched with
---worker), so the window never freezes and Stop always works. The GUI process
-itself never imports torch, so it opens instantly.
-"""
-
 import argparse
 import json
 import re
@@ -41,16 +27,12 @@ DEFAULT_AGENT = dict(
 )
 
 
-# =============================================================================
-#  WORKER SIDE  (runs in the child process; heavy imports happen lazily here)
-# =============================================================================
-
+#  Workers
 def emit(**kw):
     print(EVENT_PREFIX + json.dumps(kw), flush=True)
 
 
 def build_env(world, stage, render_mode="rgb_array"):
-    """Same wrapper stack as environments.smb_env.make_smb_env, but with a level."""
     import warnings
     import gym_super_mario_bros
     from gym.wrappers import FrameStack
@@ -102,7 +84,6 @@ def seed_all(seed, torch):
 
 
 def build_agent(a, action_dim, save_dir, device):
-    """Create a Mario agent and apply the GUI's agent settings on top of its defaults."""
     import torch
     from agents.mario import Mario
 
@@ -129,8 +110,7 @@ def build_agent(a, action_dim, save_dir, device):
     return m
 
 
-# ------------------------------ TRAINING ------------------------------------
-
+# Training
 def worker_train(cfg):
     import random
     import torch
@@ -186,7 +166,7 @@ def worker_train(cfg):
         torch.save(payload, path)
         return path
 
-    # ---- starting point: new / resume / transfer ----
+    # Starting point
     start_episode = 0
     if cfg["start_mode"] in ("resume", "transfer"):
         ck_path = OUTPUT_DIR / cfg["checkpoint"]
@@ -205,8 +185,7 @@ def worker_train(cfg):
                      rewards=list(ck.get("episode_rewards", [])),
                      flags=ck.get("flags_captured", 0),
                      steps=ck.get("total_steps", 0))
-            # The replay buffer is not stored in checkpoints. Without a fresh burn-in the
-            # agent would try to sample from an empty buffer right after resuming.
+            
             mario.burnin = mario.curr_step + original_burnin
             print(f"Resumed {cfg['checkpoint']} at step {mario.curr_step}, episode {start_episode} "
                   f"(refilling replay buffer for {original_burnin} steps first)")
@@ -309,7 +288,7 @@ def worker_train(cfg):
     emit(type="done", stopped=stopped)
 
 
-# ------------------------------- TESTING ------------------------------------
+# Testing
 
 COL_WHITE, COL_BLACK = (255, 255, 255), (0, 0, 0)
 COL_GRAY_NODE, COL_CYAN_NODE = (128, 128, 128), (255, 255, 0)
@@ -556,10 +535,7 @@ def worker_main(mode, config_path):
 
 
 
-# =============================================================================
-#  GUI SIDE  (PySide6)
-# =============================================================================
-
+# GUI
 def run_gui():
     from string import Template
     from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QUrl, Signal
@@ -669,7 +645,7 @@ def run_gui():
     def open_path(p):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
-    # ------------------------------------------------------------------ widgets
+    # Widgets
     class Segmented(QWidget):
         changed = Signal(str)
 
@@ -723,7 +699,7 @@ def run_gui():
             if value is not None:
                 self.value.setText(value)
 
-    # ------------------------------------------------------------------ window
+    # Window
     class MainWindow(QMainWindow):
         def __init__(self, settings):
             super().__init__()
@@ -759,7 +735,7 @@ def run_gui():
             self.timer.timeout.connect(self._tick)
             self.timer.start(700)
 
-        # --------------------------------------------------------- settings
+        # Settings
         def _save_settings(self):
             data = {k: g() for k, g in self.getters.items()}
             data["appearance"] = self.theme
@@ -794,12 +770,12 @@ def run_gui():
         def val(self, key):
             return self.getters[key]()
 
-        # --------------------------------------------------------- UI build
+        # UI
         def _build_ui(self):
             split = QSplitter(Qt.Orientation.Horizontal)
             self.setCentralWidget(split)
 
-            # ---------------- left: settings
+            # Settings
             left = QWidget()
             lv = QVBoxLayout(left)
             lv.setContentsMargins(14, 14, 8, 14)
@@ -837,7 +813,7 @@ def run_gui():
             lv.addWidget(self.status)
             split.addWidget(left)
 
-            # ---------------- right: dashboard
+            # Dashboard
             right = QWidget()
             rv = QVBoxLayout(right)
             rv.setContentsMargins(8, 14, 14, 14)
@@ -905,7 +881,7 @@ def run_gui():
             sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             return sa
 
-        # ---- form helpers
+        # Form helpers
         def _group(self, title, layout):
             g = QGroupBox(title)
             form = QFormLayout(g)
@@ -989,7 +965,7 @@ def run_gui():
             for s in self.device_segs:
                 s.setCurrentText(v)
 
-        # ---- train tab
+        # Train tab
         def _build_train_tab(self):
             page = QWidget()
             lay = QVBoxLayout(page)
@@ -1045,7 +1021,7 @@ def run_gui():
             self.train_ckpt[1].setEnabled(on)
             self.train_ckpt[2].setEnabled(on)
 
-        # ---- test tab
+        # Test tab
         def _build_test_tab(self):
             page = QWidget()
             lay = QVBoxLayout(page)
@@ -1078,7 +1054,7 @@ def run_gui():
             lay.addStretch(1)
             return page
 
-        # --------------------------------------------------------- helpers
+        # Helpers
         def _set_theme(self, name):
             self.theme = name
             apply_theme(QApplication.instance(), name)
@@ -1203,7 +1179,7 @@ def run_gui():
                 seed=self._seed("test_seed"), device=self.val("device"),
                 stop_file=str(STOP_FILE))
 
-        # --------------------------------------------------------- run control
+        # Run control
         def start(self):
             if self.proc is not None:
                 return
@@ -1295,7 +1271,7 @@ def run_gui():
         def _set_status(self, text):
             self.status.setText(text)
 
-        # --------------------------------------------------------- events
+        # Events
         def _on_event(self, ev):
             t, c = ev.get("type"), self.cards
             if t == "init":
@@ -1351,7 +1327,7 @@ def run_gui():
             self.prog_label.setText("")
             self.plot_dirty = True
 
-        # --------------------------------------------------------- plotting
+        # Plotting
         def _tick(self):
             if has_mpl and self.plot_dirty:
                 self._redraw()
@@ -1409,7 +1385,7 @@ def run_gui():
             self._save_settings()
             event.accept()
 
-    # ------------------------------------------------------------------ launch
+    # Launch
     try:
         settings = json.loads(SETTINGS_FILE.read_text())
     except Exception:
@@ -1420,8 +1396,6 @@ def run_gui():
     win.show()
     return app, win
 
-
-# =============================================================================
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
